@@ -11,5 +11,5 @@ Conclusion:
 This study has explored the systematic pangenome development in bacterial species (specifically E. coli) by computational parametrization. We provide complete gene family lists of the E. coli pangenome as supplementary data for further studies. We also applied the pangenome matrix for identifying important biological characteristics of different E. coli subtypes, specifically phylogroups B1, B2 and E. We find an operon-like genome region that is highly specific for ST131 strains which could act as a potential killer weapon that provides E. coli ST131 strains with a competitive advantage with other closely related bacteria and, suggestively, explains their dominance as human pathogen among E. coli strains. 
 
 Supplementary Data:
-The data accompanied this study has been put in the folder "supplementary-files". 
+The data accompanied this study has been put in the folder "pangenome-results". 
 The protein sequences can be obtained from the folder "protein-sequences".
