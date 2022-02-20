@@ -1,0 +1,14 @@
+This folder contains the additional resources for Escherichia coli pangenome analysis.
+The detail for each file is described below.
+
+Ecoli-Pangenome-CDHIT.zip
+The details of E. coli pangenome matrix based on CD-HIT method which includes the number of species (genomes) and number of genes for each gene family. The list of protein accession ID for each GF in each genome is given accordingly with each protein accession ID tagged with the genome accession ID as suffix.
+
+SoftcoreGenome-CDHIT.txt
+The list of gene families (GFs) which belong to the softcore genome of E. coli identified through CD-HIT method. 
+
+Ecoli-Pangenome-ProteinOrtho.zip
+The details of E. coli pangenome matrix based on ProteinOrtho method which includes the number of species (genomes) and number of genes for each gene family. The list of protein accession ID for each GF in each genome is given accordingly with each protein accession ID tagged with the genome accession ID as suffix.
+
+SoftcoreGenome-ProteinOrtho.txt
+The list of gene families (GFs) which belong to the softcore genome of E. coli identified through ProteinOrtho method. 
