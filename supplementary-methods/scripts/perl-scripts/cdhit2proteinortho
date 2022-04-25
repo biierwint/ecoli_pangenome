@@ -1,0 +1,166 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+ 
+=head1 NAME
+
+	cdhit2proteinortholog
+
+=head1 SYNOPSIS
+
+	cdhit2proteinortholog -i cdhit.out.clstr -l list-of-genomes.txt
+
+=head1 DESCRIPTION
+
+	list-of-genomes.txt
+	===================
+	GCF_000006785.faa
+	GCF_000007285.faa
+	GCF_000007425.faa
+	GCF_000009385.faa
+	GCF_000011285.faa
+	GCF_000011665.faa
+
+	cdhit.out.clstr
+	===============
+	>Cluster 0
+	0       2547aa, >WP_011528982.1-GCF_000013545... at 50.06%
+	1       2918aa, >WP_002989360.1-GCF_000772185... *
+	2       2910aa, >WP_047716015.1-GCF_001023495... at 91.99%
+	3       2918aa, >WP_002989360.1-GCF_001051095... at 100.00%
+	4       2546aa, >WP_053308416.1-GCF_001267805... at 49.61%
+	>Cluster 1
+	0       2416aa, >WP_011528027.1-GCF_000013525... *
+	>Cluster 2
+	0       2059aa, >WP_164926141.1-GCF_000006785... at 53.57%
+	1       2059aa, >WP_011285469.1-GCF_000011765... at 53.62%
+	2       1755aa, >WP_002990440.1-GCF_000013485... at 64.10%
+	3       1755aa, >WP_002990440.1-GCF_000013525... at 64.10%
+
+	Output
+	======
+	NumSpecies	NumGene	ClusterName	firstlist	secondlist
+
+=cut
+
+### option variables
+my $help;
+my $inFile;
+my $genomeListFile;
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'i=s'=>\$inFile, 'l=s'=>\$genomeListFile) || !defined($inFile) || !defined($genomeListFile) ) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+### Read $genomeListFile and identity the position in array
+my %genome2idx = ();
+my $counter = 0;
+my @genomes = ();
+open (IN, $genomeListFile) || die "Cannot open $genomeListFile for reading!\n";
+while (<IN>) {
+	chomp;
+	my @f=split(/\t/); 
+	$f[0]=~s/\.faa$//g; 	### remove .faa suffix if available
+	if (defined($genome2idx{$f[0]})) {	### this genome has been defined; DUPLICATE
+		print STDERR "DUPLICATE_GENOME\t$f[0] at line " . ($counter+1) . "\n";
+	} else {
+		$genome2idx{$f[0]} = $counter;
+		push (@genomes, $f[0]);
+		$counter++;
+	}
+}
+close (IN);
+
+### Read $inFile and write to STDOUT
+my @numGenes = ();
+$numGenes[$#genomes] = 0;
+my @genes = ();
+$genes[$#genomes] = "*";
+for (my $i=0; $i<=$#genomes; $i++) {
+	$genes[$i] = "*";
+	$numGenes[$i] = 0;
+}
+
+my $line = 0;
+my $currCluster = "";
+open (IN, $inFile) || die "Cannot open $inFile for reading!\n";
+while (<IN>) {
+	$line++;
+	chomp;
+
+	if (/^>/) {     ### start of cluster
+		if ($line==1) {
+			print "# Species\tGenes\tClusterID\t" . join("\t", @genomes) . "\n";
+			$currCluster = $_;
+			$currCluster =~ s/^>//g; 
+		} else {
+			my $numSpecies = 0;
+			my $totalGenes = 0;
+			for (my $i=0; $i<=$#numGenes; $i++) {
+				if ($numGenes[$i]>0) {
+					$numSpecies++;
+				}
+				$totalGenes += $numGenes[$i];
+			}
+			
+			print "$numSpecies\t$totalGenes\t$currCluster\t";
+			print join("\t", @genes), "\n";
+
+			@genes = ();
+			@numGenes = ();
+			$numGenes[$#genomes] = 0;
+			$genes[$#genomes] = "*";
+			for (my $i=0; $i<=$#genomes; $i++) {
+				$genes[$i] = "*";
+				$numGenes[$i] = 0;
+			}
+			$currCluster = $_;
+			$currCluster=~s/^>//g;
+		}
+	} else {
+		#	3       1755aa, >WP_002990440.1-GCF_000013525... at 64.10%
+		my @f = split(/\s+/);
+		my $gene = $f[2];
+		$gene=~s/\.\.\.$//g;
+		$gene=~s/^>//g;
+		my @x=split(/\-/, $gene);	### $x[0] = "WP_002990440.1", $x[1] = "GCF_000013525"
+		if (defined($genome2idx{$x[1]})) {	### this genome is defined
+			my $idx = $genome2idx{$x[1]};
+			if (length($genes[$idx])<=1) {	### the genome does not contain any gene yet
+				$genes[$idx] = $gene;
+				$numGenes[$idx] = 1;
+			} else {
+				$genes[$idx] = $genes[$idx] . ";" . $gene;
+				$numGenes[$idx]++;
+			}
+		} else {
+			print STDERR "$gene\t$x[1] at line = $line is not defined!\n";
+		}				
+	}	
+}
+
+my $numSpecies = 0;
+my $totalGenes = 0;
+for (my $i=0; $i<=$#numGenes; $i++) {
+	if ($numGenes[$i]>0) {
+		$numSpecies++;
+	}
+	$totalGenes += $numGenes[$i];
+}
+
+print "$numSpecies\t$totalGenes\t$currCluster\t";
+print join("\t", @genes), "\n";
+
+
+close (IN);
+

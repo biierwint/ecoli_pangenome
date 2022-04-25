@@ -1,0 +1,99 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+
+use pangenome::io;
+use pangenome::psystem;
+use pangenome::panlib;
+ 
+=head1 NAME
+
+	select-longest
+
+=head1 SYNOPSIS
+
+	select-longest -i GCF_000006785.faa.groups -l protein-sequences.txt
+
+=head1 DESCRIPTION
+
+	GCF_000006785.faa.groups
+	========================
+	WP_002995381.1-GCF_000006785	WP_020750157.1-GCF_000006785	WP_011054214.1-GCF_000006785
+	WP_002992072.1-GCF_000006785	WP_002984677.1-GCF_000006785	WP_002990109.1-GCF_000006785
+	WP_010921869.1-GCF_000006785	WP_011285380.1-GCF_000006785	WP_010922531.1-GCF_000006785
+	WP_010922588.1-GCF_000006785	WP_002989931.1-GCF_000006785	WP_010922037.1-GCF_000006785
+	WP_000609113.1-GCF_000006785	WP_003058873.1-GCF_000006785
+	WP_001182060.1-GCF_000006785	WP_002990147.1-GCF_000006785
+
+	protein-sequences.txt
+	=====================
+	>WP_000005472.1 MULTISPECIES: hypothetical protein [Streptococcus]	MSETTLVVQLPKELEKQLRAHYDEMISNAVARVFEDKELYKPMVRMSGLSRWLDVSTTTIQKWTKEGMPTMVIDGVTLYDKRAVTRWLKQYER
+	>WP_000013364.1 MULTISPECIES: plasmid mobilization relaxosome protein MobC [Firmicutes]	MANRFRNERIEIKLTKEEKEVFEKKMKLANCKTMSHFLRKCVLEKEIYVVDLEPFRNLQWLLSNATNNINQIAKATNTTGVIYKNEIEAMNKEIEKLSREIWQIHSLLLNKSKESSGD
+
+=cut
+
+### option variables
+my $help;
+my $inFile;
+my $protFile;
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'i=s'=>\$inFile, 'l=s'=>\$protFile) || !defined($inFile) || !defined($protFile)) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+### Read $protFile and store the length of protein
+my %prot2length = ();
+open (IN, $protFile) || die "Cannot open $protFile for reading!\n";
+while (<IN>) {
+	chomp;
+	if (length($_)>2) {
+		my @f=split();
+		$f[0]=~s/^>//g;
+		if (defined($prot2length{$f[0]})) {
+			if (length($f[$#f]) == $prot2length{$f[0]}) {	### same length
+				### OK
+			} else {
+				print STDERR "WARNING: $f[0] has two different length, i.e. " . length($f[$#f]) . " vs " . $prot2length{$f[0]} . ". Keep existing one!\n";
+			}
+		} else {
+			$prot2length{$f[0]} = length($f[$#f]);
+		}
+	}
+}
+close (IN);
+
+### Read $inFile and put the longest protein at the first column
+open (IN, $inFile) || die "Cannot open $inFile for reading!\n";
+open (OUT, ">$inFile-sorted") || die "Cannot open $inFile-sorted for writing!\n";
+while (<IN>) {
+	chomp;
+	my @f=split(/\t/);
+	my @x=split(/\-/, $f[0]);	### first sequence
+	my $curLength = $prot2length{$x[0]};
+	my $longest = 0;	### longest index
+	for (my $i=1; $i<=$#f; $i++) {
+		@x=split(/\-/, $f[$i]);
+		if ($prot2length{$x[0]} > $curLength) {
+			$curLength = $prot2length{$x[0]};
+			$longest = $i;
+		}
+	}
+	if ($longest > 0) {	### switch position of the first protein with longest protein
+		my $temp = $f[0];
+		$f[0] = $f[$longest];
+		$f[$longest] = $temp;
+	}
+	print OUT join("\t", @f), "\n";
+}
+close (IN);
+close (OUT);

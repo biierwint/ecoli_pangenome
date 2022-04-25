@@ -1,0 +1,107 @@
+#!/usr/bin/perl
+
+use warnings;
+use strict;
+use Getopt::Long;
+use File::Basename;
+use Pod::Usage;
+
+=head1 NAME
+
+fsieve
+
+=head1 SYNOPSIS
+
+ fsieve [options] <file>
+	
+  -s    sieving file (required)
+  -i	column number (to be sieved)
+    
+ example: fsieve -s list-to-filter.txt -i 1 input.txt
+
+      
+=head1 DESCRIPTION
+
+=cut
+
+#option variables
+my $verbose;
+my $sieveFile;
+my $outFile;
+my $colNumber;	
+
+#initialize options
+Getopt::Long::Configure ('bundling');
+
+if(!GetOptions ('v'=>\$verbose,'s=s'=>\$sieveFile, 'o=s'=>\$outFile, 'i=i'=>\$colNumber)
+   || !defined($sieveFile) || scalar(@ARGV) != 1)
+{
+	pod2usage(1);
+}
+
+#data variables
+my %SIEVE;
+
+my $inFile = $ARGV[0];
+
+if (!defined($colNumber)) {
+	$colNumber = 1;
+}
+$colNumber--;
+
+#process sieve list
+open(SIEVE, $sieveFile) || die "Cannot open $sieveFile\n";
+
+while (<SIEVE>)
+{
+	s/\r?\n?$//;
+	
+	if($.==1) {
+		my @fields = split('\t', $_, 2);
+		print STDERR "Sieve Column Label    : $fields[0]\n";
+	} else {
+		my @fields = split('\t', $_, 2);
+		$SIEVE{$fields[0]}++;
+	}
+}
+
+if ($.==0) {
+	die "$sieveFile is empty";
+}
+
+if (scalar(keys(%SIEVE))!=$.-1) {
+	print STDERR "Duplicate values found in $sieveFile";
+}
+close(SIEVE);
+
+if (!defined($outFile))
+{
+	my ($name, $path, $ext) = fileparse($inFile, '\..*');
+	$outFile = "sieved-$name$ext";
+}
+
+open(OUT, ">$outFile") || die "Cannot open $outFile\n";
+
+if ($inFile=~/gz$/) {	### gz file
+	open (IN, "gunzip -c $inFile |") || die "Cannot open file $inFile!\n";
+} else {
+	open (IN, $inFile) || die "Cannot open file $inFile!\n";
+}
+
+my %rowElements;
+while (<IN>)
+{
+	s/\r?\n?$//;
+	my @fields = split('\t', $_);
+			
+	if($.==1) {
+		print OUT "$_\n";
+	} else {
+		if(exists($SIEVE{$fields[$colNumber]})) {
+			print OUT "$_\n";
+		}	
+	}
+}
+		
+close(IN);
+close(OUT);

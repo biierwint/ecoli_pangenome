@@ -1,0 +1,202 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+
+use pangenome::psystem;
+use pangenome::panlib;
+
+use others::misc_func;
+ 
+=head1 NAME
+
+	merge-clusters
+
+=head1 SYNOPSIS
+
+	merge-clusters -i output-cdhit-id50-cov50.txt -l mylist-id90-cov90.txt -g additional_genome.txt [-o out.txt]
+
+=head1 DESCRIPTION
+
+	output-cdhit-id60-cov60.txt
+	===========================
+	# Species	Genes	ClusterID	GCF_000006785	GCF_000007285	GCF_000007425	GCF_000009385	GCF_000011285	GCF_000011665	GCF_000011765
+	15	15	Cluster 0	*	*	*	*	*	*	*
+	7	7	Cluster 1	*	*	*	*	*	*	*
+	1	1	Cluster 2	*	*	*	*	*	*	*
+	52	52	Cluster 3	*	*	*	*	*	*	*
+	36	36	Cluster 4	WP_164926141.1-GCF_000006785	*	*	*	*	*	WP_011285469.1-GCF_000011765
+
+	mylist-id90-cov90.txt
+	=====================
+	WP_176323556.1-GCF_013372365    WP_164476688.1-GCF_011045235    WP_065226307.1-GCF_001677475    WP_033546995.1-GCF_001900295    WP_171284394.1-GCF_013112335
+	WP_171459705.1-GCF_013122565    WP_161399883.1-GCF_009931435    WP_126298029.1-GCF_900635325
+	WP_201525683.1-GCF_904863305    WP_204667182.1-GCF_016903275    WP_181260564.1-GCF_016904555
+	WP_104858396.1-GCF_002946715    WP_001550748.1-GCF_004011015    WP_001550748.1-GCF_013282275    WP_001550748.1-GCF_006965465    WP_182927195.1-GCF_014169855
+
+	additional_genome.txt
+	=====================
+	GCF_016775845[.faa]
+	GCF_002164975[.faa]
+	GCF_009432415[.faa]
+	GCF_016776265[.faa]
+	GCF_013166975[.faa]
+	GCF_000023365[.faa]
+	
+	Assumption
+	==========
+	[-l] list is a subset of [-i] because of more stringent criteria.
+	Therefore, one of the protein sequence in [-l] should be available in [-i] and therefore can be used to populate [-i].
+
+=cut
+
+### option variables
+my $help;
+my $inFile;
+my $listFile;
+my $additionalGenome;
+my $outFile;
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'i=s'=>\$inFile, 'l=s'=>\$listFile, 'g=s'=>\$additionalGenome, 'o=s'=>\$outFile) || !defined($inFile) || !defined($listFile)) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+if (!defined($outFile)) {
+	$outFile = "$inFile-remerged";
+}
+
+### Read $inFile and determined the columns. Then write to $outFile
+my %genome2col = ();
+my @genomes = ();
+open (OUT, ">$outFile") || die "Cannot open $outFile for writing!\n";
+open (IN, $inFile) || die "Cannot open $inFile for reading!\n";
+while (<IN>) {
+	chomp;
+	my @f=split(/\t/);
+	if ($.==1) {
+		for (my $i=3; $i<=$#f; $i++) {
+			if ($f[$i]=~/.faa$/) {
+				$f[$i]=~s/\.faa$//g;
+			}
+			if  (defined($genome2col{$f[$i]})) {	### repeat column
+				print STDERR "$f[$i] is defined more than once...\n";
+			} else {
+				$genome2col{$f[$i]} = $i;
+				push(@genomes, $f[$i]);
+			}
+		}
+		print OUT $_;
+
+		if (defined($additionalGenome)) {	### if there is additional genome, this will be appended
+			open (GENOME, $additionalGenome) || die "Cannot open $additionalGenome for reading!\n";
+			my @x = <GENOME>;
+			close (GENOME);
+			my $index = 0;
+			for (my $i=0; $i<=$#x; $i++) {
+				chomp($x[$i]);
+				$x[$i]=~s/\.faa$//g;
+				if (defined($genome2col{$x[$i]})) {	### repeated genome
+					print STDERR "REPEAT_GENOME\t$x[$i]...\n";
+				} else {
+					$index++;
+					$genome2col{$x[$i]} = $#f + $index;
+					push(@genomes, $x[$i]);
+					print OUT "\t$x[$i]";
+				}
+			}
+		}
+		print OUT "\n";
+	}
+}
+close (IN);
+
+### Read $listFile and put in %cluster
+my %refID = ();
+open (LIST, $listFile) || die "Cannot open $listFile for reading!\n";
+my @list = <LIST>;
+close (LIST);
+
+for (my $i=0; $i<=$#list; $i++) {
+	chomp($list[$i]);
+	my @f=split(/\t/, $list[$i]);
+	if ($#f>=1) {
+		$refID{$f[0]} = $list[$i];
+	}
+}
+
+### Read $inFile; compare to %cluster; and write to $outFile
+my $counter = 0;
+my $line = 0;
+open (IN, $inFile) || die "Cannot open $inFile for reading!\n";
+while (<IN>) {
+	chomp;
+	$line++;
+
+	if ($line > 1) {
+		$counter++;
+		my @f=split(/[\t\;\,]/);
+		my $numSpecies = 0;
+		my $numGenes = 0;
+		my %species2protein = ();
+		my $proteins = "";	### store the string of protein IDs
+		for (my $i=3; $i<=$#f; $i++) {
+			my @x=split(/\-/, $f[$i]); 
+			if ($f[$i] eq "*") {
+				### skip
+			} else {
+				if (defined($refID{$f[$i]})) {	### this is a %refID in the $listFile
+					my @y=split(/\t/, $refID{$f[$i]});
+					for (my $j=0; $j<=$#y; $j++) {
+						my @z=split(/\-/, $y[$j]);
+						if (defined($genome2col{$z[1]})) {
+							$numGenes++;
+							if (defined($species2protein{$z[1]})) {
+								$species2protein{$z[1]} = $species2protein{$z[1]} . ";$y[$j]";
+							} else {
+								$species2protein{$z[1]} = $y[$j];
+								$numSpecies++;
+							}
+						}
+					}
+
+				} else {
+					if (defined($genome2col{$x[1]})) {
+						$numGenes++;
+						if (defined($species2protein{$x[1]})) {
+							$species2protein{$x[1]} = $species2protein{$x[1]} . ";$f[$i]";
+						} else {
+							$species2protein{$x[1]} = $f[$i];
+							$numSpecies++;
+						}
+					}
+				}
+			}
+		}
+
+		if ($f[2]=~/^C/) {
+			print OUT "$numSpecies\t$numGenes\t$f[2]";
+		} else {
+			print OUT "$numSpecies\t$numGenes\tGF_$counter";
+		}
+		for (my $i=0; $i<=$#genomes; $i++) {
+			if (defined($species2protein{$genomes[$i]})) {
+				print OUT "\t" . $species2protein{$genomes[$i]};
+			} else {
+				print OUT "\t*";
+			}
+		}
+		print OUT "\n";
+	}
+}
+close (IN);
+close (OUT);
+

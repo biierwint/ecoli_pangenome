@@ -1,0 +1,114 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+ 
+=head1 NAME
+
+	extract-fasta-id
+
+=head1 SYNOPSIS
+
+	extract-fasta-id -i nt.fasta -l list-id.txt [-o nt_selected.fasta]
+
+=head1 DESCRIPTION
+
+	This script will extract the list of ID from the nt.fasta and print out the sequence with the selected ID
+	[-o <outfile>] ==> if not defined, will write to STDOUT
+
+=cut
+
+### option variables
+my $help;
+my $inFile;
+my $listFile;
+my $outFile;
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'i=s'=>\$inFile, 'l=s'=>\$listFile, 'o=s'=>\$outFile) || !defined($inFile) || !defined($listFile)) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+### read $listFile
+my %ids = ();
+open (LIST, $listFile) || die "Cannot open $listFile for reading!\n";
+while (<LIST>) {
+	chomp;
+	my @f=split(/\t/);
+	if (defined($ids{$f[0]})) {	### ids exist
+		### skip
+	} else {
+		$ids{$f[0]} = $f[0];
+	}
+}
+close (LIST);
+
+
+### Open $inFile and add the gene symbol.
+if ($inFile=~/gz$/) {
+	open (IN, "gunzip -c $inFile |") || die "Cannot open file $inFile!\n";
+} else {
+	open (IN, $inFile) || die "Cannot open file $inFile!\n";
+} 
+
+if (defined($outFile)) {
+	open (OUT, ">$outFile") || die "Cannot open file $outFile!\n";
+}
+
+my $mapped = 1;
+my %exist = ();
+
+while (<IN>) {
+	chomp;
+
+	if (/^\>/) {	### This is fasta header
+		my $header = $_;
+		my @f=split(/\s+/, $header);
+		$f[0]=~s/^\>//g; 
+		if (defined($ids{$f[0]})) {	### defined in the $listFile
+			if (!defined($exist{$f[0]})) {	### not print yet
+				$exist{$f[0]} = $f[0];
+				$mapped = 1;
+			} else {			### already print
+				$mapped = 0;
+			}
+		} else {
+			$mapped = 0;
+		}
+
+		if ($mapped) {
+			if (defined($outFile)) {
+				print OUT $_ . "\n";
+			} else {
+				print $_ . "\n";
+			}
+		}
+	} else {
+		if ($mapped) {
+			if (defined($outFile)) {
+				print OUT $_ . "\n";
+			} else {
+				print $_ . "\n";
+			}
+		}
+	}
+}
+close(IN);
+if (defined($outFile)) {
+	close(OUT);
+}
+
+
+
+
+
+
+

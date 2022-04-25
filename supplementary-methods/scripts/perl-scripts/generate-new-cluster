@@ -1,0 +1,226 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+
+use pangenome::psystem;
+use pangenome::panlib;
+
+use others::misc_func;
+ 
+=head1 NAME
+
+	generate-new-cluster
+
+=head1 SYNOPSIS
+
+	generate-new-cluster -l clusterid2protein.txt -c cdhit-c0.6-s0.6-n4.out.clstr -p hmmsearch-EscherichiaColi-PFAM.txt [-t hmmer3_threshold -o out.txt]
+
+=head1 DESCRIPTION
+
+	clusterid2protein.txt
+	=====================
+	COG_1	WP_176323556.1-GCF_013372365    WP_164476688.1-GCF_011045235    WP_065226307.1-GCF_001677475    WP_033546995.1-GCF_001900295    WP_171284394.1-GCF_013112335
+	COG_2	WP_171459705.1-GCF_013122565    WP_161399883.1-GCF_009931435    WP_126298029.1-GCF_900635325
+	COG_3	WP_201525683.1-GCF_904863305    WP_204667182.1-GCF_016903275    WP_181260564.1-GCF_016904555
+	COG_4	WP_104858396.1-GCF_002946715    WP_001550748.1-GCF_004011015    WP_001550748.1-GCF_013282275    WP_001550748.1-GCF_006965465    WP_182927195.1-GCF_014169855
+
+	cdhit-c0.6-s0.6-n4.out.clstr
+	============================
+	>Cluster 0
+	0       7227aa, >WP_089563092.1-GCF_012934435... *
+	>Cluster 1
+	0       4897aa, >WP_112925295.1-GCF_904863445... *
+	>Cluster 2
+	0       4522aa, >WP_187269844.1-GCF_008065455... *
+	>Cluster 3
+	0       4485aa, >WP_173009489.1-GCF_013282275... *
+	>Cluster 4
+	0       4473aa, >WP_114161601.1-GCF_002494365... *
+	>Cluster 5
+	0       4433aa, >WP_106918609.1-GCF_003018655... *
+	>Cluster 6
+	0       4052aa, >WP_193562400.1-GCF_002951735... *
+
+	hmmsearch-EscherichiaColi-PFAM.txt
+	==================================
+	TargetName      Accession       QueryName       E-value
+	WP_000052797.1  PF10417.10      1-cysPrx_C      2e-05
+	WP_000052795.1  PF10417.10      1-cysPrx_C      2.1e-05
+	WP_069684300.1  PF10417.10      1-cysPrx_C      2.2e-05
+	WP_089180201.1  PF10417.10      1-cysPrx_C      2.2e-05
+	WP_061057647.1  PF10417.10      1-cysPrx_C      2.3e-05
+
+
+	Assumption
+	==========
+	clusterid2protein.txt ==> the second column is the longest protein in that cluster.
+
+
+	Output
+	======
+	same format as clusterid2protein.txt. The reference protein (in column 2) will be appended with the new cluster.
+	Assuming, COG_1 and COG_3 are new cluster. Then COG_3 will be removed. COG_1 will be replaced as below.
+	COG_1	WP_176323556.1-GCF_013372365	WP_201525683.1-GCF_904863305    WP_204667182.1-GCF_016903275    WP_181260564.1-GCF_016904555
+
+=cut
+
+### option variables
+my $help;
+my $listFile;
+my $clusterFile;
+my $outFile;
+my $hmmerFile;
+my $threshold;
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'l=s'=>\$listFile, 'c=s'=>\$clusterFile, 'p=s'=>\$hmmerFile, 't=f'=>\$threshold, 'o=s'=>\$outFile) ||  
+	!defined($listFile) || !defined($clusterFile) || !defined($hmmerFile)) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+if (!defined($threshold)) {
+	$threshold = 0.001;
+}
+
+if (!defined($outFile)) {
+	$outFile = "new-cluster";
+}
+
+### Read $hmmerFile and save in hash table
+open (HMMER, $hmmerFile) || die "Cannot open $hmmerFile for reading!\n";
+my @hmmer = <HMMER>;
+close (HMMER);
+
+my %prot2pfam = ();
+for (my $i=0; $i<=$#hmmer; $i++) {
+	chomp($hmmer[$i]);
+	my @f=split(/\t/, $hmmer[$i]);
+	if ($f[3] ne "E-value" && $f[3] <= $threshold) {	### pass the threshold
+		if (defined($prot2pfam{$f[0]})) {
+			$prot2pfam{$f[0]} .= ";$f[1]";
+		} else {
+			$prot2pfam{$f[0]} .= "$f[1]";
+		}
+	}
+}
+
+### Read $listFile and put in %cluster
+my %refID = ();
+my %ref2cluster = ();
+
+open (LIST, $listFile) || die "Cannot open $listFile for reading!\n";
+my @list = <LIST>;
+close (LIST);
+
+for (my $i=0; $i<=$#list; $i++) {
+	chomp($list[$i]);
+	my @f=split(/\t/, $list[$i]);
+	my @data = split(/\t/, $list[$i], 2);
+	if ($#f>=2) {
+		$refID{$f[1]} = $data[1];
+	} else {
+		$refID{$f[1]} = $f[1];
+	}
+	$ref2cluster{$f[1]} = $f[0];
+}
+
+### Read $clusterFile and push to @clusterarray
+open (IN, $clusterFile) || die "Cannot open $clusterFile for reading!\n";
+my @lines = <IN>;
+close (IN);
+
+my @cluster_array = ();
+my $str = "";
+for (my $i=0; $i<=$#lines; $i++) {
+	chomp($lines[$i]);
+	if ($lines[$i]=~/^>/) {
+		if ($i==0) {
+			$str = "$lines[$i]";
+		} else {
+			push (@cluster_array, $str);
+			$str = "$lines[$i]";
+		}
+	} else {
+		my @f=split(/\s+/, $lines[$i]);
+		$f[2]=~s/^>//g;
+		$f[2]=~s/\.\.\.//g;
+		if ($f[3] eq "*") {
+			$f[2] = $f[2] . "(*)";
+		}
+		$str = $str . "\t" . $f[2];
+		if ($i==$#lines) {
+			push(@cluster_array, $str);
+		}
+	}
+}
+
+my $logfile = "log-remove-cluster";
+open (LOG, ">$logfile") || die "Cannot open $logfile for writing!\n";
+print LOG "ClusterID\tRemarks\n";
+
+open (OUT, ">$outFile") || die "Cannot open $outFile for writing!\n";
+for (my $i=0; $i<=$#cluster_array; $i++) {
+	my @f = split(/\t/, $cluster_array[$i]);
+	if ($#f == 1) {
+		$f[1]=~s/\(\*\)//g;
+		print OUT $ref2cluster{$f[1]} . "\t" . $f[1] . "\n";
+	} elsif ($#f > 1) {
+		for (my $j=2; $j<=$#f; $j++) {
+			if ($f[$j]=~/\*/) {
+				my $temp = $f[1];
+				$f[1] = $f[$j];
+				$f[$j] = $temp;
+			}
+		}
+		$f[1]=~s/\(\*\)//g;
+		print OUT $ref2cluster{$f[1]} . "\t" . $f[1];
+
+		### get pfam for $f[1]
+		my @x=split(/\-/, $f[1]);
+		my $firstpfam = "";
+		if (defined($prot2pfam{$x[0]})) {
+			$firstpfam = $prot2pfam{$x[0]};
+		} else {
+			$firstpfam = "UNK";
+		}
+
+		my $ok = 1;
+		for (my $j=2; $j<=$#f; $j++) {
+			if (!defined($refID{$f[$j]})) {
+				print STDERR "UNDEFINED_ID: $f[$j]\n";
+			}
+			@x=split(/\-/, $f[$j]);
+			my $secondpfam = "";
+			if (defined($prot2pfam{$x[0]})) {
+				$secondpfam = $prot2pfam{$x[0]};
+			} else {
+				$secondpfam = "UNK";
+			}
+			my ($diff1, $diff2, $isect) = compare2lists($firstpfam, $secondpfam);
+                        my $numdiff1 = scalar(@$diff1);
+                        my $numdiff2 = scalar(@$diff2);
+                        my $numisect = scalar(@$isect);
+			if ($numdiff1==0 && $numdiff2==0 && $numisect>0) {	### exactly the same
+				print OUT "\t" . $refID{$f[$j]};
+				print LOG $ref2cluster{$f[$j]} . "\t". $ref2cluster{$f[$j]} . " ($f[$j]) has been merged to " . $ref2cluster{$f[1]} . " ($f[1])\n";
+			} else {
+				print OUT "\n" . $ref2cluster{$f[$j]} . "\t" . $f[$j];
+				print STDERR $ref2cluster{$f[$j]} . "\tCannot be merged to " . $ref2cluster{$f[1]} . " because the PFAM profile is different\n";
+			}
+		}
+		print OUT "\n";
+	} else {
+		print STDERR "UNDEFINED_CLUSTER\t$cluster_array[$i]\n";
+	}
+}
+close (OUT);
+close (LOG);

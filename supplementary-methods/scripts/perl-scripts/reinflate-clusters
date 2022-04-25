@@ -1,0 +1,118 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+
+use pangenome::io;
+use pangenome::psystem;
+use pangenome::panlib;
+ 
+=head1 NAME
+
+	reinflate-clusters
+
+=head1 SYNOPSIS
+
+	reinflate-clusters -i output-cdhit-c60-s60.txt -l merged.faa.core_genes [-o outfile.txt]
+
+=head1 DESCRIPTION
+
+	output-cdhit-c60-s60.txt
+	========================
+	# Species	Genes	ClusterID	GCF_000006785	GCF_000007285	GCF_000007425	GCF_000009385	GCF_000011285	GCF_000011665	GCF_000011765
+	15	15	Cluster 0	*	*	*	*	*	*	*
+	7	7	Cluster 1	*	*	*	*	*	*	*
+	1	1	Cluster 2	*	*	*	*	*	*	*
+	52	52	Cluster 3	*	*	*	*	*	*	*
+	36	36	Cluster 4	WP_164926141.1-GCF_000006785	*	*	*	*	*	WP_011285469.1-GCF_000011765
+
+	merged.faa.core_genes
+	=====================
+	WP_000868345.1-GCF_000006785	WP_000868345.1-GCF_000007285	WP_000868345.1-GCF_000007425	WP_000868345.1-GCF_000009385
+	....
+
+
+=cut
+
+### option variables
+my $help;
+my $inFile;
+my $listFile;
+my $outFile;
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'i=s'=>\$inFile, 'l=s'=>\$listFile, 'o=s'=>\$outFile) || !defined($inFile) || !defined($listFile)) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+if (!defined($outFile)) {
+	$outFile = "$inFile-reinflate";
+}
+
+
+### Read $inFile and determined the columns. Then write to $outFile
+my %genome2col = ();
+my @genomes = ();
+open (OUT, ">$outFile") || die "Cannot open $outFile for writing!\n";
+open (IN, $inFile) || die "Cannot open $inFile for reading!\n";
+while (<IN>) {
+	chomp;
+	my @f=split(/\t/);
+	if ($.==1) {
+		for (my $i=3; $i<=$#f; $i++) {
+			if ($f[$i]=~/.faa$/) {
+				$f[$i]=~s/\.faa$//g;
+			}
+			if  (defined($genome2col{$f[$i]})) {	### repeat column
+				print STDERR "$f[$i] is defined more than once...\n";
+			} else {
+				$genome2col{$f[$i]} = $i;
+				push(@genomes, $f[$i]);
+			}
+		}
+	}
+	print OUT $_ . "\n";
+}
+close (IN);
+
+### Read $listFile and write to $outFile
+my $counter = 0;
+open (IN, $listFile) || die "Cannot open $listFile for reading!\n";
+while (<IN>) {
+	chomp;
+	$counter++;
+	my @f=split(/\t/);
+	my $numGenes = 0;
+	my $numSpecies = 0;
+	my %species2protein = ();
+	for (my $i=0; $i<=$#f; $i++) {
+		my @x=split(/\-/, $f[$i]);
+		if (defined($genome2col{$x[1]})) {
+			$numGenes++;
+			if (defined($species2protein{$x[1]})) {
+				$species2protein{$x[1]} = $species2protein{$x[1]} . ";$f[$i]";
+			} else {
+				$species2protein{$x[1]} = $f[$i];
+				$numSpecies++;
+			}
+		}
+	}
+	print OUT "$numSpecies\t$numGenes\tcore_cluster_$counter";
+	for (my $i=0; $i<=$#genomes; $i++) {
+		if (defined($species2protein{$genomes[$i]})) {
+			print OUT "\t" . $species2protein{$genomes[$i]};
+		} else {
+			print OUT "\t*";
+		}
+	}
+	print OUT "\n";
+}
+close (IN);

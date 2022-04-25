@@ -1,0 +1,109 @@
+#!/usr/bin/perl -w
+### Last Update: 12 October 2016
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+use Linux::MemInfo;
+use Parallel::ForkManager;
+#use Filesys::Df;
+use File::Basename;
+ 
+use pangenome::psystem;
+
+=head1 NAME
+
+	distribute-jobs
+
+=head1 SYNOPSIS
+
+	distribute-jobs -i run-all-hhsearch.sh -m 8 -p numProcessor
+
+=head1 DESCRIPTION
+
+	distribute-jobs assume that each line in the "*.sh" file is an independent job. Therefore, it will submit the job accordingly.
+	-m signifies the amount of memory (in GB) per command.
+
+
+=cut
+
+### option variables
+my $help;
+my $inFile;
+my $requiredMem;
+my $numCPUs;
+my $force;
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'i=s'=>\$inFile, 'm=i'=>\$requiredMem, 'p=i'=>\$numCPUs, 'f'=>\$force) || !defined($inFile)) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+if (!defined($requiredMem)) {
+	$requiredMem = 1;
+}
+
+my $datetime = localtime();
+print "Start: $datetime\n";
+
+
+### Get number of processes
+my $numProcesses;
+
+if (defined($force) && defined($numCPUs)) {
+		$numProcesses=$numCPUs;
+} else {
+	my $numProcesses_by_CPUs = getSpawnedProcesses_by_CPUs (10);	### 10 is 10 seconds
+	my $numProcesses_by_memory = getSpawnedProcesses_by_memory ($requiredMem);	### 8 is 8GB
+
+	$numProcesses = $numProcesses_by_memory;
+	if ($numProcesses > $numProcesses_by_CPUs) {
+		$numProcesses = $numProcesses_by_CPUs;
+	}
+
+	### If number of CPUs to use is defined
+	if (defined($numCPUs) && $numCPUs < $numProcesses) {
+		$numProcesses=$numCPUs;
+	}
+}
+
+if ($numProcesses > 63) {        ### This is to limit the number of processes run
+	print STDERR "Number of processes are limit to 63\n";
+	$numProcesses = 63;
+}
+
+print STDERR "Number of processes = $numProcesses\n";
+my @allcommands = ();
+open (IN, $inFile) || die "Cannot open $inFile for reading!\n";
+while (<IN>) {
+	chomp;
+	if (/^#/) {
+		### skip
+	} else {
+		push (@allcommands, $_);
+	}
+}
+close (IN);
+
+### Parallel process
+my $pm = new Parallel::ForkManager($numProcesses);
+
+foreach my $pmCommand (@allcommands) {
+	$pm->start and next;	### do the fork
+
+	system($pmCommand);
+	my $return_code = $? >> 8;
+	print STDERR "$pmCommand, exit with return code = $return_code\n";
+	$pm->finish;
+}
+$pm->wait_all_children;
+
+
+$datetime = localtime();
+print "End: $datetime\n";

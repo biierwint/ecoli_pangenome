@@ -1,0 +1,91 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+ 
+=head1 NAME
+
+	add-singletons -i myproject-id40-cov50.proteinortho.tsv -l list-of-proteins.txt
+
+=head1 SYNOPSIS
+
+	add-singletons -i myproject-id40-cov50.proteinortho.tsv -l list-of-proteins.txt
+
+=head1 DESCRIPTION
+
+	The purpose of this script is to add singleton cluster to the proteinortho output.
+
+=cut
+
+### option variables
+my $help;
+my $inFile;
+my $listFile;
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'i=s'=>\$inFile, 'l=s'=>\$listFile) || !defined($inFile) || !defined($listFile)) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+
+### Read $inFile
+my %genome2col = ();	### keep the column number of each genome from the header
+my %existprotein = ();
+my $numCol =  0;
+open (IN, $inFile) || die "Cannot open $inFile for reading!\n";
+while (<IN>) {
+	chomp;
+	my @f=split(/\t/);
+	if ($.==1) {	### header
+		for (my $i=3; $i<=$#f; $i++) {
+			$f[$i]=~s/\.faa$//g;
+			$genome2col{$f[$i]} = $i;
+		}
+		$numCol = $#f;
+	} else {
+		for (my $i=3; $i<=$#f; $i++) {
+			my @x=split(/[\,\;]/, $f[$i]);
+			for (my $j=0; $j<=$#x; $j++) {
+				$existprotein{$x[$j]} = 1;
+			}
+		}
+	}
+	print "$_\n";
+}
+close (IN);
+
+### Read $listFile and write the missing protein
+
+my @line = ();
+$line[0] = 1;
+$line[1] = 1;
+$line[2] = 0;
+for (my $i=3; $i<=$numCol; $i++) {
+	$line[$i]="*";
+}
+
+open  (IN, $listFile) || die "Cannot open $listFile for reading!\n";
+while (<IN>) {
+	chomp;
+	if (defined($existprotein{$_})) {
+		### skip
+	} else {
+		my @f=split(/\-/); 	### WP_0001-GCF_0001
+		my $col = $genome2col{$f[1]};
+
+		my @prot_line = @line;
+		$prot_line[$col] = $_;
+		print join("\t", @prot_line) . "\n";
+	}
+}
+close (IN);
+
+

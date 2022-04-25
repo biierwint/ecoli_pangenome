@@ -1,0 +1,145 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+use others::misc_func;
+ 
+=head1 NAME
+
+	get-jaccard-index
+
+=head1 SYNOPSIS
+
+	get-jaccard-index -i final-output-cdhit-id40-cov50.txt -j final-output-proteinortho-id40-cov50.txt
+
+=head1 DESCRIPTION
+
+
+=cut
+
+### option variables
+my $help;
+my $inFile1;
+my $inFile2;
+
+my $logFile = "log-get-jaccard-index.txt";
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'i=s'=>\$inFile1, 'j=s'=>\$inFile2) || !defined($inFile1) || !defined($inFile2)) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+#print "File1\tFile2\t\#Cluster1\t\#Cluster2\t\#Identical\t\#Union\tJaccardIndex\n";
+
+my @union = ();
+my %list1 = ();
+my $counter = 0;
+my $numCluster1 = 0;
+my $header = "";
+open (IN, $inFile1) || die "Cannot open $inFile1 for reading!\n";
+while (<IN>) {
+	chomp;
+	$counter++;
+	my @f=split(/\t/);
+	if ($counter>1) {
+		$numCluster1++;
+		my $list = "";
+		for (my $i=3; $i<=$#f; $i++) {
+ 			if ($f[$i] eq "*") {
+				### skip
+			} else {
+				$f[$i]=~s/\,/\;/g;
+				if (length($list)<=1) {
+					$list = $f[$i];
+				} else {
+					$list = $list . ";" . $f[$i];
+				}
+			}
+		}
+		$list1{$list} = 1;
+		push(@union, $_);
+	} else {
+		$header = $_;
+	}
+}
+close (IN);
+
+my $numCluster2 = 0;
+$counter = 0;
+my $SAME = 0;
+my $COHERENT = 0;
+open (IN, $inFile2) || die "Cannot open $inFile2 for reading!\n";
+while (<IN>) {
+	chomp;
+	$counter++;
+	my @f=split(/\t/);
+	if ($counter>1) {
+		$numCluster2++;
+		my $list = "";
+		for (my $i=3; $i<=$#f; $i++) {
+			if ($f[$i] eq "*") {
+				### skip
+			} else {
+				$f[$i]=~s/\,/\;/g; 
+				if (length($list)<=1) {
+					$list = $f[$i];
+				} else {
+					$list = $list . ";" . $f[$i];
+				}
+			}
+		}
+
+		if (defined($list1{$list})) {	### this list is exactly the same as the list in list1
+			$SAME++;
+		} else {
+			my $mapped = 0;
+			foreach my $key (keys %list1) {
+				if (length($list)==length($key)) {
+					my ($diff1, $diff2, $isect) = compare2lists($list, $key);
+					my $numdiff1 = scalar(@$diff1);
+					my $numdiff2 = scalar(@$diff2);
+					my $numisect = scalar(@$isect);
+					if ($numdiff1 == 0 && $numdiff2 == 0 && $numisect>1) {
+						$SAME++;
+						$mapped = 1;
+						last;
+					}
+				}
+			}
+			if ($mapped < 1) {	### unmapped
+				push(@union, $_);
+			}
+		}
+	}
+}
+close (IN);
+	
+my $union_num = $#union+1;
+$SAME = $SAME;
+
+$numCluster1 = $numCluster1;
+$numCluster2 = $numCluster2;
+
+my $jaccard = $SAME / $union_num * 100;
+$jaccard = sprintf ("%.2f", $jaccard);
+
+my @temp1 = split(/\//, $inFile1);
+$inFile1 = $temp1[$#temp1];
+@temp1 = split(/\//, $inFile2);
+$inFile2 = $temp1[$#temp1];
+
+#print "$inFile1\t$inFile2\t$numCluster1\t$numCluster2\t$SAME\t$union_num\t$jaccard\n";
+print "Total Cluster in $inFile1 = " . $numCluster1 . "\n";
+print "Total Cluster in $inFile2 = " . $numCluster2 . "\n";
+print "Total Identical = $SAME\n";
+print "Total Union = $union_num\n";
+print "Jaccard Similarity = $jaccard\n";
+

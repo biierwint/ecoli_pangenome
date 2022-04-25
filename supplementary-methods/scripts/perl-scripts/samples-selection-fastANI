@@ -1,0 +1,103 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+ 
+=head1 NAME
+
+	samples-selection-fastANI
+
+=head1 SYNOPSIS
+
+	samples-selection-fastANI -i list-of-genome-files.txt -f folder-with-output-files -t threshold
+	samples-selection-fastANI -i list-of-genome-files.txt -f output -t 99.99
+
+=head1 DESCRIPTION
+
+	list-of-genome-files.txt should be ordered according to the genome size.
+
+	The files inside "folder-with-output-files" should be the output of fastANI with query to a reference list. 
+	The file would be something like: output-queryid.txt
+	GCF_000005845.2_ASM584v2_genomic.fna.gz GCF_002952955.1_ASM295295v1_genomic.fna.gz      100     1547    1547
+	GCF_000005845.2_ASM584v2_genomic.fna.gz GCF_002953855.1_ASM295385v1_genomic.fna.gz      100     1547    1547
+	GCF_000005845.2_ASM584v2_genomic.fna.gz GCF_002953075.1_ASM295307v1_genomic.fna.gz      99.9999 1547    1547
+	GCF_000005845.2_ASM584v2_genomic.fna.gz GCF_002953815.1_ASM295381v1_genomic.fna.gz      99.9999 1547    1547
+	GCF_000005845.2_ASM584v2_genomic.fna.gz GCF_002953895.1_ASM295389v1_genomic.fna.gz      99.9999 1547    1547
+	GCF_000005845.2_ASM584v2_genomic.fna.gz GCF_002953095.1_ASM295309v1_genomic.fna.gz      99.9999 1547    1547
+	GCF_000005845.2_ASM584v2_genomic.fna.gz GCF_002952915.1_ASM295291v1_genomic.fna.gz      99.9999 1547    1547
+	GCF_000005845.2_ASM584v2_genomic.fna.gz GCF_002953775.1_ASM295377v1_genomic.fna.gz      99.9999 1547    1547
+
+
+=cut
+
+### option variables
+my $help;
+my $inFile;
+my $folderName;
+my $threshold;
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'i=s'=>\$inFile, 'f=s'=>\$folderName, 't=f'=>\$threshold) || !defined($inFile) ) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+if (!defined($folderName)) {
+	$folderName = "output";
+}
+if (!defined($threshold)) {
+	$threshold = 99.99;
+}
+
+### Initialization
+my %dropid = ();
+
+### Read $inFile and write to terminal
+open (IN, $inFile) || die "Cannot open $inFile for reading!\n";
+open (DROP, ">dropsamples.txt") || die "Cannot open dropsamples.txt for writing!\n";
+while (<IN>) {
+	chomp;
+	my @lines = split(/\t/);
+	my $accession = $lines[0];
+
+	if (!defined($dropid{$accession})) {	### $accession id is not flagged for dropping
+		my @x = "";
+		if (open (ANI, "$folderName/output-$accession.txt")) {
+			@x = <ANI>;
+		} else {
+			print DROP "Cannot open $folderName/output-$accession.txt for reading!\n";
+		}
+		close(ANI);
+	
+		for (my $i=0; $i<=$#x; $i++) {
+			chomp($x[$i]);
+			my @f=split(/\t/, $x[$i]);
+			if ($f[0] eq $f[1]) {	### compare to itself
+				### skip
+			} else {
+				if (defined($dropid{$f[1]})) {	### if the ID at $f[1] has been flagged to drop, then ignore it
+					### skip
+				} else {
+					if ($f[2] >= $threshold) {	### the ANI value at $f[2] is greater than threshold
+						$dropid{$f[1]} = "ANI=$f[2];$f[0]";
+					}
+				}
+			}
+		}
+		print $accession . "\n";
+	} else {
+		my @y=split(/\;/, $dropid{$accession});
+		print DROP "$accession\thas been dropped because has $y[0] to $y[1]!\n";
+	}
+
+}
+close (IN);
+close (DROP);
+

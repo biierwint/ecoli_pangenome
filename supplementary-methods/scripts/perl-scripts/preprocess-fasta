@@ -1,0 +1,257 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+
+use pangenome::io;
+use pangenome::psystem;
+use pangenome::panlib;
+ 
+=head1 NAME
+
+	preprocess-fasta
+
+=head1 SYNOPSIS
+
+	preprocess-fasta -i list-of-files.txt [-x -m <method> -s <similarity-threshold> -l <coverage-threshold> -p <numThreads> -o outfolder -c configuration-files.conf]
+
+=head1 DESCRIPTION
+
+	list-of-files.txt
+	=================
+	GCF_000006785.2_ASM678v2_protein.faa.gz
+	GCF_000007285.1_ASM728v1_protein.faa.gz
+	GCF_000007425.1_ASM742v1_protein.faa.gz
+	GCF_000009385.1_ASM938v1_protein.faa.gz
+	GCF_000011285.1_ASM1128v1_protein.faa.gz	
+
+	[-x] ==> exclude homolog
+	[-m] ==> cdhit | proteinortho	(proteinortho option is experimental)
+	[-s] ==> only applicable if exclude homolog with certain similarity threshold. If undefined, by default is 98%
+	[-l] ==> only applicable if exclude homolog and method proteinortho, by default is 90%
+	[-p] ==> number of threads for parallel process
+	[-o] ==> output folder. By default: ./preprocessed-out/
+
+	[-c] ==> configuration files
+	ITERATIVE_CDHIT	=	/usr/local/bin/iterative_cdhit
+	PROTEINORTHO	=	/home/erwint/programs/proteinortho-master/proteinortho
+	EXTRACT_FASTA_ID	=	/home/erwint/bin/extract-fasta-id
+	GET_PROTEINORTHO_HOMOLOGS	=	/home/erwint/bin/pangenome/get-proteinortho-homologs
+	SH	=	/bin/sh
+
+=cut
+
+### option variables
+my $help;
+my $listFile;
+my $excludehomolog;
+my $sim_threshold;
+my $cov_threshold;
+my $outFolder;
+my $confFile;
+my $numThreads;
+my $method;
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'i=s'=>\$listFile, 'x'=>\$excludehomolog, 'm=s'=>\$method, 's=f'=>\$sim_threshold, 'l=f'=>\$cov_threshold,  'p=i'=>\$numThreads, 
+	'o=s'=>\$outFolder, 'c=s'=>\$confFile) 	|| !defined($listFile)) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+if (!defined($numThreads)) {
+	$numThreads = -1;
+}
+
+
+my $success_run = 1;
+my $returnCode = 0;
+my $cleanup = 1;
+
+
+if (!defined($outFolder)) {
+	$outFolder = "preprocessed-out/";
+}
+
+if (!(-d $outFolder)) {	### folder not available
+	$returnCode = system ("mkdir $outFolder");
+	if ($returnCode == 0) {
+		print STDERR "Created folder $outFolder...\n";
+	} else {
+		$success_run = 0;
+	}
+} else {
+	print STDERR "$outFolder exists... skip...\n";
+}
+	
+
+### Read configuration file if available
+my %command = ();
+if (defined($confFile)) {
+	%command = readParams($confFile);
+} else {
+	$command{"ITERATIVE_CDHIT"} = "/usr/local/bin/iterative_cdhit";
+	$command{"EXTRACT_FASTA_ID"} = "/home/erwint/bin/extract-fasta-id";
+	$command{"PROTEINORTHO"}	=	"/home/erwint/programs/proteinortho-master/proteinortho";
+	$command{"GET_PROTEINORTHO_HOMOLOGS"}	=	"/home/erwint/bin/pangenome/get-proteinortho-homologs";
+	$command{"SH"} = "/bin/sh";
+	$command{"CLEANUP"} = "YES";
+
+}
+printParams(%command);
+
+if (defined($command{"CLEANUP"}) && $command{"CLEANUP"} eq "NO") {
+	$cleanup = 0;
+}
+
+
+### Read list of files ($listFile)
+my @scripts;
+my @files;
+my $counter = 0;
+open (IN, $listFile) || die "Cannot open $listFile for reading!\n";
+while (<IN>) {
+	chomp;
+	my $inFile = $_;
+	if ($inFile=~/\.gz$/) {	### gzip file
+		open (FASTA, "gunzip -c $inFile |") || die "Cannot open $inFile for reading!\n";
+	} else {
+		open (FASTA, $inFile) || die "Cannot open $inFile for reading!\n";
+	}
+	my @data = <FASTA>;
+	close (FASTA);
+
+	### Read FASTA file and write the processed FASTA file to a new file 	
+	my @x=split(/\//, $inFile);
+	@x=split(/\./, $x[$#x]);
+	
+	my $outfile = "$outFolder/$x[0].faa";
+	open (OUT, ">$outfile") || die "Cannot open $outfile for writing!\n";
+	for (my $i=0; $i<=$#data; $i++) {
+		chomp($data[$i]);
+		if ($data[$i]=~/^>/) {	### fasta header
+			my @f=split(/\s+/, $data[$i]); 	### split fasta header. And take only the first column
+			my $header=$f[0] . "-$x[0]";
+			print OUT "$header\n";
+		} else {
+			print OUT "$data[$i]\n";
+		}
+	}
+	close (OUT);
+
+	### Do we need to remove homolog? [can use proteinortho or iterative_cdhit]
+	if (defined($excludehomolog)) {	### user wants to exclude homolog
+		if (!defined($method)) {
+			$method = "cdhit";
+		}
+		### iterative_cdhit -m <in.faa> -u <upper_threshold> -l <lower_threshold> -c <cdhit_output_filename>
+		### input to iterative_cdhit: $outfile = $x[0] . ".faa";
+
+		if (!defined($sim_threshold)) {	### if $sim_threshold is not given
+			$sim_threshold = 98;
+		}
+		if (!defined($cov_threshold)) { ### if $cov_threshold is not given
+			$cov_threshold = 90;
+		}
+
+		open (OUT_SCRIPT, ">$outfile.sh-$counter") || die "Cannot open $outfile.sh-$counter for writing!\n";
+		print OUT_SCRIPT "cp $outfile $outfile.bak\n"; ### copy command
+		if (lc($method) eq "cdhit") {
+			print OUT_SCRIPT $command{"ITERATIVE_CDHIT"} . " -m $outfile -u 100 -l $sim_threshold -c $outfile\_clustered\n"; ### iterative_cdhit command
+			#print OUT_SCRIPT $command{"EXTRACT_FASTA_ID"} . " -i $outfile.bak -l $outfile\.groups >> $outfile\_clustered\n";	### extract-fasta-id command
+			print OUT_SCRIPT $command{"EXTRACT_FASTA_ID"} . " -i $outfile.bak -l $outfile\.groups >> $outfile\n";	### extract-fasta-id command
+			#print OUT_SCRIPT "mv $outfile\_clustered $outfile\n";	### rename to $outfile
+		} else {
+			print OUT_SCRIPT $command{"PROTEINORTHO"} . " -p=blastp+ $outfile -identity=$sim_threshold -cov=$cov_threshold -cpus=1 -selfblast -singles -project=$x[0]-id$sim_threshold-cov$cov_threshold\n";
+			print OUT_SCRIPT $command{"GET_PROTEINORTHO_HOMOLOGS"} . " -i $x[0]-id$sim_threshold-cov$cov_threshold.proteinortho.tsv -o $outfile\.groups -s $outfile\.singletons\n";
+			print OUT_SCRIPT $command{"EXTRACT_FASTA_ID"} . " -i $outfile.bak -l $outfile\.groups > $outfile\n";	### extract-fasta-id command
+			print OUT_SCRIPT $command{"EXTRACT_FASTA_ID"} . " -i $outfile.bak -l $outfile\.singletons >> $outfile\n";	### extract-fasta-id command
+		}
+
+		close (OUT_SCRIPT);
+		
+		push (@scripts, "$outfile.sh-$counter");
+		$counter++;
+
+	}
+	push(@files, $outfile);
+}
+close (IN);
+
+if (scalar(@scripts) > 0) {	### need to run @scripts
+	my %returnCode = runParallel($numThreads, 2, @scripts);
+	my %status = check_status(\%returnCode, \@files);
+	
+	### print status for each sample run
+	foreach my $key (keys %status) {
+		if ($key eq "returnCode") {	### skip
+			### skip
+		} else {
+			print STDERR "Processing $key: " . $status{$key} . "\n";
+		}
+	}
+	### get overall success_run status
+	if ($status{"returnCode"} < 0) {
+		$success_run = 0;
+	}
+	if ($cleanup) {
+		for (my $i=0; $i<=$#files; $i++) {
+			if (lc($method) eq "cdhit") {
+				system("rm $files[$i]\_clustered");
+				system("rm $files[$i]\_clustered.clstr");
+				system("rm $files[$i].bak");
+				system("rm $files[$i].sh-$i");
+			} else {
+				my @x=split(/\//, $files[$i]);
+				$x[1]=~s/\.faa$//g;
+				system("rm $x[0]/$x[1].faa.singletons");
+				system("rm $x[1]-id*-cov*.blast-graph");
+				system("rm $x[1]-id*-cov*.info");
+				system("rm $x[1]-id*-cov*.proteinortho-graph");
+				system("rm $x[1]-id*-cov*.proteinortho-graph.summary");
+				system("rm $x[1]-id*-cov*.proteinortho.html");
+				system("rm $files[$i].sh-$i");
+				system("rm $files[$i].bak");
+				system("rm $files[$i].blastp+.*");
+			}
+		}
+	}
+}
+
+if ($success_run) {
+	if (defined($excludehomolog)) {
+		### Create "homologs" folder
+		if (!(-d "$outFolder/homologs")) {	### folder not available
+			$returnCode = system ("mkdir $outFolder/homologs");
+			if ($returnCode == 0) {
+				print STDERR "Created folder $outFolder/homologs...\n";
+			} else {
+				print STDERR "Failed creating folder $outFolder/homologs...\n";
+			}
+		} else {
+			print STDERR "$outFolder/homologs exists... skip...\n";
+		}
+	}
+
+	for (my $i=0; $i<=$#files; $i++) {
+		### Merging files
+		system ("cat $files[$i] >> $outFolder/merged.faa");
+
+		if (defined($excludehomolog)) {
+			### Move $files[$i].groups to $outFolder/homologs
+			system("mv $files[$i].groups $outFolder/homologs/");
+		}
+		### Remove $files[$i]
+		system("rm $files[$i]");
+	}
+	print STDERR "SUCCESS: Finish!\n";
+} else {
+	print STDERR "FAIL: preprocess-fasta!\n";
+}

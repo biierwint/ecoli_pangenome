@@ -1,0 +1,122 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+ 
+=head1 NAME
+
+	selfblast2proteinortholog
+
+=head1 SYNOPSIS
+
+	selfblast2proteinortholog -i myprojects-id40-cov50.proteinortho.tsv -l list-of-genomes.txt
+
+=head1 DESCRIPTION
+
+	list-of-genomes.txt
+	===================
+	GCF_000006785.faa
+	GCF_000007285.faa
+	GCF_000007425.faa
+	GCF_000009385.faa
+	GCF_000011285.faa
+	GCF_000011665.faa
+
+	myprojects-id40-cov50.proteinortho.tsv
+	======================================
+	# Species       Genes   Alg.-Conn.      merged.faa
+	1       44      x       WP_167839307.1-GCF_012221365,WP_167839326.1-GCF_012221365,
+	1       44      x       WP_167839307.1-GCF_012221365,WP_167839326.1-GCF_012221365,
+
+	Output
+	======
+	NumSpecies	NumGene	ClusterName	firstlist	secondlist
+
+=cut
+
+### option variables
+my $help;
+my $inFile;
+my $genomeListFile;
+
+### initialize option
+Getopt::Long::Configure ('bundling');
+
+if (!GetOptions ('h'=>\$help, 'i=s'=>\$inFile, 'l=s'=>\$genomeListFile) || !defined($inFile) || !defined($genomeListFile) ) {
+	if ($help) {
+		pod2usage(-verbose => 2);
+	} else {
+		pod2usage(1);
+	}
+}
+
+### Read $genomeListFile and identity the position in array
+my %genome2idx = ();
+my $counter = 0;
+my @genomes = ();
+open (IN, $genomeListFile) || die "Cannot open $genomeListFile for reading!\n";
+while (<IN>) {
+	chomp;
+	my @f=split(/\t/); 
+	$f[0]=~s/\.faa$//g; 	### remove .faa suffix if available
+	if (defined($genome2idx{$f[0]})) {	### this genome has been defined; DUPLICATE
+		print STDERR "DUPLICATE_GENOME\t$f[0] at line " . ($counter+1) . "\n";
+	} else {
+		$genome2idx{$f[0]} = $counter;
+		push (@genomes, $f[0]);
+		$counter++;
+	}
+}
+close (IN);
+
+
+my $line = 0;
+open (IN, $inFile) || die "Cannot open $inFile for reading!\n";
+while (<IN>) {
+	$line++;
+	chomp;
+
+	my %species2protein = ();
+	if ($line==1) {
+		print "# Species\tGenes\tGF_ID\t" . join("\t", @genomes) . "\n";
+	} else {
+		my @f = split(/\t/);
+		my $numSpecies = 0;
+		my $totalGenes = $f[1];
+		my %species = ();
+
+		my $index = $line - 1; 
+		my $clusterID = "GF_$index";
+
+		my @x = split(/[\,\;]/, $f[3]);
+		if ($#x == ($totalGenes - 1)) {
+			### OK
+		} else {
+			print STDERR "Line $line ==> totalGenes not matched!\n";
+		}
+		#print join("\t", @x), "\n";
+		for (my $i=0; $i<=$#x; $i++) {
+			my @g = split(/\-/, $x[$i]);
+			if (defined($species{$g[1]})) {
+				$species2protein{$g[1]} = $species2protein{$g[1]} . ";$x[$i]";
+			} else {
+				$species{$g[1]} = $g[1];
+				$species2protein{$g[1]} = $x[$i];
+				$numSpecies++;
+			}
+		}
+			
+		print "$numSpecies\t$totalGenes\t$clusterID";
+		for (my $i=0; $i<=$#genomes; $i++) {
+			if (defined($species2protein{$genomes[$i]})) {
+				print "\t" . $species2protein{$genomes[$i]};
+			} else {
+				print "\t*";
+			}
+		}
+		print "\n";
+	}
+}
+close  (IN);
