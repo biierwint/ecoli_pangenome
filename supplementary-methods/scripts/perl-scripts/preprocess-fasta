@@ -228,15 +228,15 @@ if (scalar(@scripts) > 0) {	### need to run @scripts
 if ($success_run) {
 	if (defined($excludehomolog)) {
 		### Create "homologs" folder
-		if (!(-d "$outFolder/homologs")) {	### folder not available
-			$returnCode = system ("mkdir $outFolder/homologs");
+		if (!(-d "$outFolder/AIS")) {	### folder not available
+			$returnCode = system ("mkdir $outFolder/AIS");
 			if ($returnCode == 0) {
-				print STDERR "Created folder $outFolder/homologs...\n";
+				print STDERR "Created folder $outFolder/AIS...\n";
 			} else {
-				print STDERR "Failed creating folder $outFolder/homologs...\n";
+				print STDERR "Failed creating folder $outFolder/AIS...\n";
 			}
 		} else {
-			print STDERR "$outFolder/homologs exists... skip...\n";
+			print STDERR "$outFolder/AIS exists... skip...\n";
 		}
 	}
 
@@ -245,8 +245,8 @@ if ($success_run) {
 		system ("cat $files[$i] >> $outFolder/merged.faa");
 
 		if (defined($excludehomolog)) {
-			### Move $files[$i].groups to $outFolder/homologs
-			system("mv $files[$i].groups $outFolder/homologs/");
+			### Move $files[$i].groups to $outFolder/AIS
+			system("mv $files[$i].groups $outFolder/AIS/");
 		}
 		### Remove $files[$i]
 		system("rm $files[$i]");
